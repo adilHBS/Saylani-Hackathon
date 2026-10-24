@@ -1,0 +1,178 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Payslip — HCM Lite</title>
+  <link rel="stylesheet" href="../css/style.css" />
+</head>
+<body>
+  <div id="navRoot"></div>
+
+  <main class="container">
+    <h2 class="page-title">Monthly Payslip</h2>
+
+    <div class="card no-print" id="controlsCard">
+      <div class="toolbar" id="controls">
+        <div id="employeePickerWrap" class="hidden">
+          <label style="margin-top:0;">Employee</label>
+          <select id="employeePicker"></select>
+        </div>
+        <div>
+          <label style="margin-top:0;">Month</label>
+          <select id="monthPicker"></select>
+        </div>
+        <button class="btn btn-sm" id="printBtn" style="margin-top:22px;">Print / Save as PDF</button>
+      </div>
+    </div>
+
+    <div id="payslipRoot"></div>
+  </main>
+
+  <script src="../js/storage.js"></script>
+  <script src="../js/auth.js"></script>
+  <script src="../js/attendance.js"></script>
+  <script>
+    (function () {
+      const session = getSession();
+      if (!session) { window.location.href = '../index.html'; return; }
+      const user = getUserById(session.userId);
+      if (!user) { window.location.href = '../index.html'; return; }
+
+      document.getElementById('navRoot').innerHTML = renderNav('payslip');
+      bindLogout();
+
+      const isAdmin = user.role === 'admin';
+      let targetEmployeeId = user.id;
+
+      /* Employee picker (admin only) */
+      if (isAdmin) {
+        const wrap = document.getElementById('employeePickerWrap');
+        wrap.classList.remove('hidden');
+        const sel = document.getElementById('employeePicker');
+        const emps = getUsers().filter(u => u.role === 'employee');
+        sel.innerHTML = emps.map(e =>
+          `<option value="${e.id}">${escapeHtml(e.name)} — ${escapeHtml(e.department)}</option>`
+        ).join('');
+        if (emps.length > 0) targetEmployeeId = emps[0].id;
+        sel.addEventListener('change', () => {
+          targetEmployeeId = sel.value;
+          render();
+        });
+      }
+
+      /* Month picker: last 12 months */
+      const monthSel = document.getElementById('monthPicker');
+      const now = new Date();
+      const options = [];
+      for (let i = 0; i < 12; i++) {
+        const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
+        const val = d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0');
+        const label = d.toLocaleString('en-US', { month: 'long', year: 'numeric' });
+        options.push({ val, label });
+      }
+      monthSel.innerHTML = options.map(o =>
+        `<option value="${o.val}">${o.label}</option>`
+      ).join('');
+      monthSel.addEventListener('change', render);
+
+      document.getElementById('printBtn').addEventListener('click', () => window.print());
+
+      render();
+
+      function render() {
+        const emp = getUserById(targetEmployeeId);
+        if (!emp) {
+          document.getElementById('payslipRoot').innerHTML =
+            `<div class="card empty">No employee selected.</div>`;
+          return;
+        }
+        const monthVal = monthSel.value; // YYYY-MM
+        document.getElementById('payslipRoot').innerHTML = buildPayslip(emp, monthVal);
+      }
+
+      function buildPayslip(emp, monthVal) {
+        const [year, month] = monthVal.split('-').map(Number);
+        const company = getCompany() || {};
+        const workingDays = company.workingDays || [1,2,3,4,5];
+
+        // Compute working days in month
+        const daysInMonth = new Date(year, month, 0).getDate();
+        let totalWorkingDays = 0;
+        for (let d = 1; d <= daysInMonth; d++) {
+          const ds = `${year}-${String(month).padStart(2,'0')}-${String(d).padStart(2,'0')}`;
+          if (!isWeekend(ds, workingDays)) totalWorkingDays++;
+        }
+
+        const monthlySalary = Number(emp.salary) || 0;
+        const perDay = totalWorkingDays > 0 ? monthlySalary / totalWorkingDays : 0;
+
+        // Filter attendance for that month & employee
+        const prefix = `${year}-${String(month).padStart(2,'0')}`;
+        const att = getAttendance().filter(r =>
+          String(r.employeeId) === String(emp.id) && r.date.startsWith(prefix)
+        );
+
+        let presentCount = 0, lateCount = 0, halfDayCount = 0;
+        att.forEach(r => {
+          if (r.status === 'present') presentCount++;
+          else if (r.status === 'late') lateCount++;
+          else if (r.status === 'halfday') halfDayCount++;
+        });
+
+        // Absent = working days so far in month minus days with any attendance
+        const today = new Date();
+        const isCurrentMonth = today.getFullYear() === year && (today.getMonth() + 1) === month;
+        const cutoffDay = isCurrentMonth ? today.getDate() : daysInMonth;
+
+        let expectedSoFar = 0;
+        for (let d = 1; d <= cutoffDay; d++) {
+          const ds = `${year}-${String(month).padStart(2,'0')}-${String(d).padStart(2,'0')}`;
+          if (!isWeekend(ds, workingDays)) expectedSoFar++;
+        }
+        const attendedDays = att.length;
+        const absentDays = Math.max(0, expectedSoFar - attendedDays);
+
+        const deduction = perDay * (absentDays + 0.5 * halfDayCount);
+        const net = Math.max(0, monthlySalary - deduction);
+
+        const monthLabel = new Date(year, month - 1, 1)
+          .toLocaleString('en-US', { month: 'long', year: 'numeric' });
+
+        return `
+          <div class="payslip">
+            <div class="payslip-head">
+              <div>
+                <h2>${escapeHtml(company.name || 'Company')}</h2>
+                <div class="muted">Payslip for ${monthLabel}</div>
+              </div>
+              <div style="text-align:right;">
+                <strong>${escapeHtml(emp.name)}</strong><br>
+                <span class="muted">${escapeHtml(emp.department)}</span><br>
+                <span class="muted">${escapeHtml(emp.email)}</span>
+              </div>
+            </div>
+
+            <div class="payslip-row"><span>Monthly Salary</span><span>Rs. ${monthlySalary.toLocaleString()}</span></div>
+            <div class="payslip-row"><span>Working Days in Month</span><span>${totalWorkingDays}</span></div>
+            <div class="payslip-row"><span>Per Day Rate</span><span>Rs. ${perDay.toFixed(2)}</span></div>
+
+            <div class="payslip-row"><span>Present Days</span><span>${presentCount}</span></div>
+            <div class="payslip-row"><span>Late Days</span><span>${lateCount}</span></div>
+            <div class="payslip-row"><span>Half Days</span><span>${halfDayCount}</span></div>
+            <div class="payslip-row"><span>Absent Days</span><span>${absentDays}</span></div>
+
+            <div class="payslip-row"><span>Deduction (Absent + 0.5 × Half Days)</span><span>Rs. ${deduction.toFixed(2)}</span></div>
+
+            <div class="payslip-row total"><span>Net Pay</span><span>Rs. ${net.toFixed(2)}</span></div>
+
+            <p class="muted" style="margin-top:20px;">
+              Generated on ${new Date().toLocaleString()}. This is a computer-generated payslip.
+            </p>
+          </div>
+        `;
+      }
+    })();
+  </script>
+</body>
+</html>

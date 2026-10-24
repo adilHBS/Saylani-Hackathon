@@ -1,0 +1,260 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>My Dashboard — HCM Lite</title>
+  <link rel="stylesheet" href="../css/style.css" />
+</head>
+<body>
+  <div id="navRoot"></div>
+
+  <main class="container">
+    <h2 class="page-title">My Dashboard</h2>
+
+    <div class="stats-grid" id="statsGrid"></div>
+
+    <div class="card">
+      <h3>Check In / Check Out</h3>
+      <div class="toolbar">
+        <button class="btn btn-success" id="checkInBtn">Check In</button>
+        <button class="btn btn-danger" id="checkOutBtn">Check Out</button>
+        <span class="muted" id="attendanceMsg"></span>
+      </div>
+    </div>
+
+    <div class="card">
+      <h3>Apply for Leave</h3>
+      <form id="leaveForm" novalidate>
+        <label>Leave Type</label>
+        <select id="leaveType">
+          <option value="Casual">Casual</option>
+          <option value="Sick">Sick</option>
+          <option value="Annual">Annual</option>
+          <option value="Unpaid">Unpaid</option>
+        </select>
+
+        <label>From Date</label>
+        <input type="date" id="leaveFrom" />
+        <span class="error" id="err-leaveFrom"></span>
+
+        <label>To Date</label>
+        <input type="date" id="leaveTo" />
+        <span class="error" id="err-leaveTo"></span>
+
+        <label>Reason</label>
+        <textarea id="leaveReason" placeholder="Reason for leave..."></textarea>
+        <span class="error" id="err-leaveReason"></span>
+
+        <button type="submit" class="btn">Apply</button>
+        <span class="muted" id="leaveMsg" style="margin-left:10px;"></span>
+      </form>
+    </div>
+
+    <div class="card">
+      <h3>My Attendance</h3>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Date</th><th>Check In</th><th>Check Out</th><th>Hours</th><th>Status</th></tr></thead>
+          <tbody id="attendanceBody"></tbody>
+        </table>
+      </div>
+    </div>
+
+    <div class="card">
+      <h3>My Leave Requests</h3>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Type</th><th>From</th><th>To</th><th>Days</th><th>Status</th><th>Comment</th></tr></thead>
+          <tbody id="leaveBody"></tbody>
+        </table>
+      </div>
+    </div>
+
+    <div class="card">
+      <h3>Announcements</h3>
+      <div id="announcementsList"></div>
+    </div>
+  </main>
+
+  <div class="helper">
+    <div class="helper-box hidden" id="helperBox">
+      <div class="helper-header">Smart Helper</div>
+      <div class="helper-messages" id="helperMessages"></div>
+      <div class="helper-input-row">
+        <input type="text" id="helperInput" placeholder="Ask about your leaves, hours..." />
+        <button id="helperSend">Send</button>
+      </div>
+    </div>
+    <button class="helper-toggle" id="helperToggle">?</button>
+  </div>
+
+  <script src="../js/storage.js"></script>
+  <script src="../js/auth.js"></script>
+  <script src="../js/attendance.js"></script>
+  <script src="../js/leave.js"></script>
+  <script src="../js/helper.js"></script>
+  <script>
+    (function () {
+      const user = requireAuth('employee');
+      if (!user) return;
+      document.getElementById('navRoot').innerHTML = renderNav('employee');
+      bindLogout();
+
+      renderAll();
+
+      /* ---------- Check in / out ---------- */
+      document.getElementById('checkInBtn').addEventListener('click', function () {
+        const res = checkIn(user.id);
+        showAttendanceMsg(res.msg);
+        renderAll();
+      });
+      document.getElementById('checkOutBtn').addEventListener('click', function () {
+        const res = checkOut(user.id);
+        showAttendanceMsg(res.msg);
+        renderAll();
+      });
+
+      function showAttendanceMsg(msg) {
+        const el = document.getElementById('attendanceMsg');
+        el.textContent = msg;
+        setTimeout(() => { el.textContent = ''; }, 5000);
+      }
+
+      /* ---------- Leave form ---------- */
+      document.getElementById('leaveForm').addEventListener('submit', function (e) {
+        e.preventDefault();
+        clearErrors(['err-leaveFrom','err-leaveTo','err-leaveReason']);
+        const type = document.getElementById('leaveType').value;
+        const from = document.getElementById('leaveFrom').value;
+        const to = document.getElementById('leaveTo').value;
+        const reason = document.getElementById('leaveReason').value.trim();
+        const msgEl = document.getElementById('leaveMsg');
+        msgEl.textContent = '';
+
+        let ok = true;
+        if (!from) { setError('err-leaveFrom', 'From date required'); ok = false; }
+        if (!to) { setError('err-leaveTo', 'To date required'); ok = false; }
+        if (!reason) { setError('err-leaveReason', 'Reason is required'); ok = false; }
+        if (!ok) return;
+
+        const check = canApplyLeave(user.id, from, to, type);
+        if (!check.ok) {
+          msgEl.textContent = check.msg;
+          msgEl.style.color = '#ef4444';
+          return;
+        }
+
+        const leaves = getLeaves();
+        leaves.push({
+          id: Date.now(),
+          employeeId: user.id,
+          type: type,
+          from: from,
+          to: to,
+          days: check.days,
+          reason: reason,
+          status: 'pending',
+          comment: ''
+        });
+        saveLeaves(leaves);
+        document.getElementById('leaveForm').reset();
+        msgEl.textContent = `Leave request submitted (${check.days} day(s)). Pending approval.`;
+        msgEl.style.color = '#10b981';
+        renderAll();
+      });
+
+      /* ---------- Renderers ---------- */
+      function renderAll() {
+        renderStats();
+        renderAttendance();
+        renderLeaves();
+        renderAnnouncements();
+      }
+
+      function renderStats() {
+        const att = getAttendance().filter(r => String(r.employeeId) === String(user.id));
+        const today = todayStr();
+        const todayRec = att.find(r => r.date === today);
+        const balance = getEmployeeLeaveBalance(user.id);
+
+        let status = 'Not checked in';
+        if (todayRec) {
+          if (todayRec.status === 'late') status = 'Late (checked in)';
+          else if (todayRec.status === 'present') status = 'Present';
+          else if (todayRec.status === 'halfday') status = 'Half Day';
+        }
+
+        document.getElementById('statsGrid').innerHTML = `
+          <div class="stat-card"><div class="label">Leave Balance</div><div class="value">${balance}</div></div>
+          <div class="stat-card"><div class="label">Today</div><div class="value" style="font-size:1.1rem;">${status}</div></div>
+          <div class="stat-card"><div class="label">Total Present</div><div class="value">${att.filter(a => a.status === 'present' || a.status === 'late').length}</div></div>
+          <div class="stat-card"><div class="label">Total Late</div><div class="value">${att.filter(a => a.status === 'late').length}</div></div>
+        `;
+      }
+
+      function renderAttendance() {
+        const att = getAttendance()
+          .filter(r => String(r.employeeId) === String(user.id))
+          .slice()
+          .sort((a, b) => b.date.localeCompare(a.date))
+          .slice(0, 30);
+        const tbody = document.getElementById('attendanceBody');
+        if (att.length === 0) {
+          tbody.innerHTML = `<tr><td colspan="5" class="empty">No attendance records yet.</td></tr>`;
+          return;
+        }
+        tbody.innerHTML = att.map(r => `
+          <tr>
+            <td>${r.date}</td>
+            <td>${r.checkIn || '—'}</td>
+            <td>${r.checkOut || '—'}</td>
+            <td>${hoursWorked(r)}</td>
+            <td>${statusBadge(r.status)}</td>
+          </tr>
+        `).join('');
+      }
+
+      function renderLeaves() {
+        const leaves = getLeaves()
+          .filter(l => String(l.employeeId) === String(user.id))
+          .slice()
+          .sort((a, b) => b.id - a.id);
+        const tbody = document.getElementById('leaveBody');
+        if (leaves.length === 0) {
+          tbody.innerHTML = `<tr><td colspan="6" class="empty">No leave requests yet.</td></tr>`;
+          return;
+        }
+        tbody.innerHTML = leaves.map(l => `
+          <tr>
+            <td>${escapeHtml(l.type)}</td>
+            <td>${l.from}</td>
+            <td>${l.to}</td>
+            <td>${l.days}</td>
+            <td>${leaveStatusBadge(l.status)}</td>
+            <td>${escapeHtml(l.comment || '')}</td>
+          </tr>
+        `).join('');
+      }
+
+      function renderAnnouncements() {
+        const anns = read('hcm_announcements', []);
+        const el = document.getElementById('announcementsList');
+        if (anns.length === 0) {
+          el.innerHTML = `<p class="empty">No announcements yet.</p>`;
+          return;
+        }
+        el.innerHTML = anns.slice(0, 5).map(a => `
+          <div style="padding:10px 0;border-bottom:1px solid #eee;">
+            <strong>${escapeHtml(a.text)}</strong><br>
+            <span class="muted">${escapeHtml(a.by)} · ${new Date(a.date).toLocaleString()}</span>
+          </div>
+        `).join('');
+      }
+
+      // Helper chat
+      initHelper('employee', user);
+    })();
+  </script>
+</body>
+</html>

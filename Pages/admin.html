@@ -1,0 +1,204 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Admin Dashboard — HCM Lite</title>
+  <link rel="stylesheet" href="../css/style.css" />
+</head>
+<body>
+  <div id="navRoot"></div>
+
+  <main class="container">
+    <h2 class="page-title">Admin Dashboard</h2>
+
+    <div class="stats-grid" id="statsGrid"></div>
+
+    <div class="card">
+      <h3>Today's Attendance</h3>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr><th>Employee</th><th>Department</th><th>Check In</th><th>Check Out</th><th>Status</th></tr>
+          </thead>
+          <tbody id="todayAttendanceBody"></tbody>
+        </table>
+      </div>
+    </div>
+
+    <div class="card">
+      <h3>Pending Leave Requests</h3>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr><th>Employee</th><th>Type</th><th>From</th><th>To</th><th>Days</th><th>Action</th></tr>
+          </thead>
+          <tbody id="pendingLeavesBody"></tbody>
+        </table>
+      </div>
+    </div>
+
+    <div class="card">
+      <h3>Announcements</h3>
+      <form id="announcementForm" class="inline-form" style="margin-bottom:14px;">
+        <div style="flex:3;">
+          <label for="annText">New Announcement</label>
+          <input type="text" id="annText" placeholder="e.g. Office closed on Friday" />
+        </div>
+        <button type="submit" class="btn btn-sm" style="margin-top:22px;">Post</button>
+      </form>
+      <div id="announcementsList"></div>
+    </div>
+  </main>
+
+  <div class="helper">
+    <div class="helper-box hidden" id="helperBox">
+      <div class="helper-header">Smart Helper</div>
+      <div class="helper-messages" id="helperMessages"></div>
+      <div class="helper-input-row">
+        <input type="text" id="helperInput" placeholder="Ask a question..." />
+        <button id="helperSend">Send</button>
+      </div>
+    </div>
+    <button class="helper-toggle" id="helperToggle">?</button>
+  </div>
+
+  <script src="../js/storage.js"></script>
+  <script src="../js/auth.js"></script>
+  <script src="../js/attendance.js"></script>
+  <script src="../js/leave.js"></script>
+  <script src="../js/helper.js"></script>
+  <script>
+    (function () {
+      const user = requireAuth('admin');
+      if (!user) return;
+
+      document.getElementById('navRoot').innerHTML = renderNav('admin');
+      bindLogout();
+
+      renderStats();
+      renderTodayAttendance();
+      renderPendingLeaves();
+      renderAnnouncements();
+
+      // Announcement posting
+      document.getElementById('announcementForm').addEventListener('submit', function (e) {
+        e.preventDefault();
+        const text = document.getElementById('annText').value.trim();
+        if (!text) return;
+        const anns = read('hcm_announcements', []);
+        anns.unshift({ id: Date.now(), text: text, by: user.name, date: new Date().toISOString() });
+        write('hcm_announcements', anns);
+        document.getElementById('annText').value = '';
+        renderAnnouncements();
+      });
+
+      // Helper chat
+      initHelper('admin', user);
+
+      /* ---------- Renderers ---------- */
+      function renderStats() {
+        const users = getUsers();
+        const employees = users.filter(u => u.role === 'employee');
+        const attendance = getAttendance();
+        const today = todayStr();
+        const todayRecs = attendance.filter(r => r.date === today);
+        const presentToday = todayRecs.filter(r => r.status !== 'absent').length;
+        const pendingLeaves = getLeaves().filter(l => l.status === 'pending').length;
+
+        document.getElementById('statsGrid').innerHTML = `
+          <div class="stat-card"><div class="label">Total Employees</div><div class="value">${employees.length}</div></div>
+          <div class="stat-card"><div class="label">Present Today</div><div class="value">${presentToday}</div></div>
+          <div class="stat-card"><div class="label">Pending Leaves</div><div class="value">${pendingLeaves}</div></div>
+          <div class="stat-card"><div class="label">Departments</div><div class="value">${new Set(employees.map(e => e.department)).size}</div></div>
+        `;
+      }
+
+      function renderTodayAttendance() {
+        const users = getUsers().filter(u => u.role === 'employee');
+        const today = todayStr();
+        const recs = getAttendance().filter(r => r.date === today);
+        const byEmp = {};
+        recs.forEach(r => { byEmp[r.employeeId] = r; });
+
+        const tbody = document.getElementById('todayAttendanceBody');
+        if (users.length === 0) {
+          tbody.innerHTML = `<tr><td colspan="5" class="empty">No employees yet. Add employees first.</td></tr>`;
+          return;
+        }
+        tbody.innerHTML = users.map(u => {
+          const rec = byEmp[u.id];
+          return `
+            <tr>
+              <td>${escapeHtml(u.name)}</td>
+              <td>${escapeHtml(u.department)}</td>
+              <td>${rec && rec.checkIn ? rec.checkIn : '—'}</td>
+              <td>${rec && rec.checkOut ? rec.checkOut : '—'}</td>
+              <td>${rec ? statusBadge(rec.status) : '<span class="badge badge-absent">Absent</span>'}</td>
+            </tr>
+          `;
+        }).join('');
+      }
+
+      function renderPendingLeaves() {
+        const pending = getLeaves().filter(l => l.status === 'pending');
+        const tbody = document.getElementById('pendingLeavesBody');
+        if (pending.length === 0) {
+          tbody.innerHTML = `<tr><td colspan="6" class="empty">No pending leave requests.</td></tr>`;
+          return;
+        }
+        tbody.innerHTML = pending.map(l => {
+          const emp = getUserById(l.employeeId);
+          return `
+            <tr>
+              <td>${emp ? escapeHtml(emp.name) : 'Unknown'}</td>
+              <td>${escapeHtml(l.type)}</td>
+              <td>${l.from}</td>
+              <td>${l.to}</td>
+              <td>${l.days}</td>
+              <td>
+                <button class="btn btn-sm btn-success" data-approve="${l.id}">Approve</button>
+                <button class="btn btn-sm btn-danger" data-reject="${l.id}">Reject</button>
+              </td>
+            </tr>
+          `;
+        }).join('');
+
+        tbody.querySelectorAll('[data-approve]').forEach(btn => {
+          btn.addEventListener('click', () => decideLeave(btn.dataset.approve, 'approved'));
+        });
+        tbody.querySelectorAll('[data-reject]').forEach(btn => {
+          btn.addEventListener('click', () => decideLeave(btn.dataset.reject, 'rejected'));
+        });
+      }
+
+      function decideLeave(id, status) {
+        const comment = prompt(status === 'approved' ? 'Comment (optional):' : 'Reason for rejection:') || '';
+        const leaves = getLeaves();
+        const leave = leaves.find(l => String(l.id) === String(id));
+        if (!leave) return;
+        leave.status = status;
+        leave.comment = comment;
+        saveLeaves(leaves);
+        renderPendingLeaves();
+        renderStats();
+      }
+
+      function renderAnnouncements() {
+        const anns = read('hcm_announcements', []);
+        const el = document.getElementById('announcementsList');
+        if (anns.length === 0) {
+          el.innerHTML = `<p class="empty">No announcements yet.</p>`;
+          return;
+        }
+        el.innerHTML = anns.map(a => `
+          <div style="padding:10px 0;border-bottom:1px solid #eee;">
+            <strong>${escapeHtml(a.text)}</strong><br>
+            <span class="muted">${escapeHtml(a.by)} · ${new Date(a.date).toLocaleString()}</span>
+          </div>
+        `).join('');
+      }
+    })();
+  </script>
+</body>
+</html>

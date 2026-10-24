@@ -1,0 +1,94 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Company Settings — HCM Lite</title>
+  <link rel="stylesheet" href="../css/style.css" />
+</head>
+<body>
+  <div id="navRoot"></div>
+
+  <main class="container">
+    <h2 class="page-title">Company Settings</h2>
+
+    <div class="card" style="max-width:600px;">
+      <form id="settingsForm" novalidate>
+        <label>Company Name</label>
+        <input type="text" id="setName" />
+        <span class="error" id="err-setName"></span>
+
+        <label>Office Start Time (HH:MM)</label>
+        <input type="time" id="setStart" />
+        <span class="error" id="err-setStart"></span>
+
+        <label>Grace Minutes</label>
+        <input type="number" id="setGrace" min="0" />
+        <span class="error" id="err-setGrace"></span>
+
+        <label>Yearly Leave Quota (days)</label>
+        <input type="number" id="setQuota" min="0" />
+        <span class="error" id="err-setQuota"></span>
+
+        <label>Working Days</label>
+        <div id="workingDaysBox" style="display:flex;gap:10px;flex-wrap:wrap;margin-top:6px;"></div>
+
+        <button type="submit" class="btn">Save Settings</button>
+      </form>
+    </div>
+  </main>
+
+  <script src="../js/storage.js"></script>
+  <script src="../js/auth.js"></script>
+  <script>
+    (function () {
+      const user = requireAuth('admin');
+      if (!user) return;
+      document.getElementById('navRoot').innerHTML = renderNav('settings');
+      bindLogout();
+
+      const company = getCompany() || {};
+      const days = [
+        { v: 0, label: 'Sun' }, { v: 1, label: 'Mon' }, { v: 2, label: 'Tue' },
+        { v: 3, label: 'Wed' }, { v: 4, label: 'Thu' }, { v: 5, label: 'Fri' },
+        { v: 6, label: 'Sat' }
+      ];
+      const selected = company.workingDays || [1,2,3,4,5];
+
+      document.getElementById('setName').value = company.name || '';
+      document.getElementById('setStart').value = company.startTime || '09:00';
+      document.getElementById('setGrace').value = company.graceMinutes != null ? company.graceMinutes : 15;
+      document.getElementById('setQuota').value = company.leaveQuota != null ? company.leaveQuota : 20;
+
+      const box = document.getElementById('workingDaysBox');
+      box.innerHTML = days.map(d => `
+        <label style="display:flex;align-items:center;gap:6px;font-weight:normal;margin:0;">
+          <input type="checkbox" value="${d.v}" ${selected.includes(d.v) ? 'checked' : ''} style="width:auto;" />
+          ${d.label}
+        </label>
+      `).join('');
+
+      document.getElementById('settingsForm').addEventListener('submit', function (e) {
+        e.preventDefault();
+        clearErrors(['err-setName','err-setStart','err-setGrace','err-setQuota']);
+        const name = document.getElementById('setName').value.trim();
+        const startTime = document.getElementById('setStart').value;
+        const graceMinutes = Number(document.getElementById('setGrace').value);
+        const leaveQuota = Number(document.getElementById('setQuota').value);
+        const workingDays = [...box.querySelectorAll('input[type=checkbox]:checked')].map(x => Number(x.value));
+
+        let ok = true;
+        if (!name) { setError('err-setName', 'Company name is required'); ok = false; }
+        if (!startTime) { setError('err-setStart', 'Start time is required'); ok = false; }
+        if (isNaN(graceMinutes) || graceMinutes < 0) { setError('err-setGrace', 'Must be 0 or more'); ok = false; }
+        if (isNaN(leaveQuota) || leaveQuota < 0) { setError('err-setQuota', 'Must be 0 or more'); ok = false; }
+        if (workingDays.length === 0) { alert('Select at least one working day'); ok = false; }
+        if (!ok) return;
+
+        saveCompany({ name, startTime, graceMinutes, leaveQuota, workingDays });
+        alert('Settings saved.');
+      });
+    })();
+  </script>
+</body>
+</html>

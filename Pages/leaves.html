@@ -1,0 +1,88 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Leave Requests — HCM Lite</title>
+  <link rel="stylesheet" href="../css/style.css" />
+</head>
+<body>
+  <div id="navRoot"></div>
+
+  <main class="container">
+    <h2 class="page-title">Leave Requests</h2>
+
+    <div class="card">
+      <h3>All Leave Requests</h3>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr><th>Employee</th><th>Type</th><th>From</th><th>To</th><th>Days</th><th>Reason</th><th>Status</th><th>Comment</th><th>Action</th></tr>
+          </thead>
+          <tbody id="leaveBody"></tbody>
+        </table>
+      </div>
+    </div>
+  </main>
+
+  <script src="../js/storage.js"></script>
+  <script src="../js/auth.js"></script>
+  <script src="../js/leave.js"></script>
+  <script>
+    (function () {
+      const user = requireAuth('admin');
+      if (!user) return;
+      document.getElementById('navRoot').innerHTML = renderNav('leaves');
+      bindLogout();
+
+      render();
+
+      function render() {
+        const leaves = getLeaves().slice().sort((a, b) => b.id - a.id);
+        const tbody = document.getElementById('leaveBody');
+        if (leaves.length === 0) {
+          tbody.innerHTML = `<tr><td colspan="9" class="empty">No leave requests yet.</td></tr>`;
+          return;
+        }
+        tbody.innerHTML = leaves.map(l => {
+          const emp = getUserById(l.employeeId);
+          const action = l.status === 'pending'
+            ? `<button class="btn btn-sm btn-success" data-approve="${l.id}">Approve</button>
+               <button class="btn btn-sm btn-danger" data-reject="${l.id}">Reject</button>`
+            : '—';
+          return `
+            <tr>
+              <td>${emp ? escapeHtml(emp.name) : 'Unknown'}</td>
+              <td>${escapeHtml(l.type)}</td>
+              <td>${l.from}</td>
+              <td>${l.to}</td>
+              <td>${l.days}</td>
+              <td>${escapeHtml(l.reason || '')}</td>
+              <td>${leaveStatusBadge(l.status)}</td>
+              <td>${escapeHtml(l.comment || '')}</td>
+              <td>${action}</td>
+            </tr>
+          `;
+        }).join('');
+
+        tbody.querySelectorAll('[data-approve]').forEach(b =>
+          b.addEventListener('click', () => { decide(b.dataset.approve, 'approved'); render(); })
+        );
+        tbody.querySelectorAll('[data-reject]').forEach(b =>
+          b.addEventListener('click', () => { decide(b.dataset.reject, 'rejected'); render(); })
+        );
+      }
+
+      function decide(id, status) {
+        const comment = prompt(status === 'approved' ? 'Comment (optional):' : 'Reason for rejection:') || '';
+        const leaves = getLeaves();
+        const l = leaves.find(x => String(x.id) === String(id));
+        if (!l) return;
+        l.status = status;
+        l.comment = comment;
+        saveLeaves(leaves);
+      }
+    })();
+  </script>
+</body>
+</html>

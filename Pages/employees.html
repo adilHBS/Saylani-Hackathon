@@ -1,0 +1,211 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Manage Employees — HCM Lite</title>
+  <link rel="stylesheet" href="../css/style.css" />
+</head>
+<body>
+  <div id="navRoot"></div>
+
+  <main class="container">
+    <h2 class="page-title">Manage Employees</h2>
+
+    <div class="card">
+      <h3 id="formTitle">Add Employee</h3>
+      <form id="employeeForm" novalidate>
+        <input type="hidden" id="empId" />
+        <label>Full Name</label>
+        <input type="text" id="empName" placeholder="e.g. Ali Khan" />
+        <span class="error" id="err-empName"></span>
+
+        <label>Email (login)</label>
+        <input type="email" id="empEmail" placeholder="ali@company.com" />
+        <span class="error" id="err-empEmail"></span>
+
+        <label>Password</label>
+        <input type="password" id="empPassword" placeholder="min 4 characters" />
+        <span class="error" id="err-empPassword"></span>
+
+        <label>Department</label>
+        <input type="text" id="empDept" placeholder="e.g. Engineering" />
+        <span class="error" id="err-empDept"></span>
+
+        <label>Monthly Salary (Rs.)</label>
+        <input type="number" id="empSalary" placeholder="e.g. 80000" min="1" />
+        <span class="error" id="err-empSalary"></span>
+
+        <button type="submit" class="btn" id="empSubmitBtn">Add Employee</button>
+        <button type="button" class="btn btn-danger hidden" id="cancelEditBtn" style="margin-left:8px;">Cancel</button>
+      </form>
+    </div>
+
+    <div class="card">
+      <h3>Employee List</h3>
+      <div class="toolbar">
+        <input type="text" id="searchInput" placeholder="Search by name or email..." />
+        <select id="deptFilter">
+          <option value="">All Departments</option>
+        </select>
+      </div>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr><th>Name</th><th>Email</th><th>Department</th><th>Salary</th><th>Actions</th></tr>
+          </thead>
+          <tbody id="employeeBody"></tbody>
+        </table>
+      </div>
+    </div>
+  </main>
+
+  <script src="../js/storage.js"></script>
+  <script src="../js/auth.js"></script>
+  <script src="../js/employees.js"></script>
+  <script>
+    (function () {
+      const user = requireAuth('admin');
+      if (!user) return;
+      document.getElementById('navRoot').innerHTML = renderNav('employees');
+      bindLogout();
+
+      let editingId = null;
+
+      const form = document.getElementById('employeeForm');
+      const empIdEl = document.getElementById('empId');
+      const nameEl = document.getElementById('empName');
+      const emailEl = document.getElementById('empEmail');
+      const passEl = document.getElementById('empPassword');
+      const deptEl = document.getElementById('empDept');
+      const salEl = document.getElementById('empSalary');
+      const formTitle = document.getElementById('formTitle');
+      const submitBtn = document.getElementById('empSubmitBtn');
+      const cancelBtn = document.getElementById('cancelEditBtn');
+
+      renderList();
+      populateDeptFilter();
+
+      form.addEventListener('submit', function (e) {
+        e.preventDefault();
+        clearErrors(['err-empName','err-empEmail','err-empPassword','err-empDept','err-empSalary']);
+
+        const name = nameEl.value.trim();
+        const email = emailEl.value.trim().toLowerCase();
+        const password = passEl.value;
+        const department = deptEl.value.trim();
+        const salary = Number(salEl.value);
+
+        let ok = true;
+        if (!name) { setError('err-empName', 'Name is required'); ok = false; }
+        if (!isValidEmail(email)) { setError('err-empEmail', 'Valid email required'); ok = false; }
+        else {
+          const existing = getUsers().find(u => u.email === email && String(u.id) !== String(editingId));
+          if (existing) { setError('err-empEmail', 'Email already in use'); ok = false; }
+        }
+        if (!editingId && password.length < 4) { setError('err-empPassword', 'Password must be at least 4 characters'); ok = false; }
+        if (editingId && password && password.length < 4) { setError('err-empPassword', 'Password must be at least 4 characters'); ok = false; }
+        if (!department) { setError('err-empDept', 'Department is required'); ok = false; }
+        if (!salary || salary <= 0) { setError('err-empSalary', 'Salary must be greater than 0'); ok = false; }
+        if (!ok) return;
+
+        if (editingId) {
+          updateEmployee(editingId, { name, email, department, salary, password });
+          resetForm();
+        } else {
+          addEmployee({ name, email, password, department, salary });
+          resetForm();
+        }
+        renderList();
+        populateDeptFilter();
+      });
+
+      cancelBtn.addEventListener('click', resetForm);
+
+      function resetForm() {
+        editingId = null;
+        empIdEl.value = '';
+        form.reset();
+        formTitle.textContent = 'Add Employee';
+        submitBtn.textContent = 'Add Employee';
+        cancelBtn.classList.add('hidden');
+        clearErrors(['err-empName','err-empEmail','err-empPassword','err-empDept','err-empSalary']);
+      }
+
+      function startEdit(id) {
+        const emp = getUserById(id);
+        if (!emp) return;
+        editingId = id;
+        empIdEl.value = id;
+        nameEl.value = emp.name;
+        emailEl.value = emp.email;
+        passEl.value = '';
+        deptEl.value = emp.department;
+        salEl.value = emp.salary;
+        formTitle.textContent = 'Edit Employee';
+        submitBtn.textContent = 'Save Changes';
+        cancelBtn.classList.remove('hidden');
+        window.scrollTo({ top: 0, behavior: 'smooth' });
+      }
+
+      function renderList() {
+        const search = document.getElementById('searchInput').value.toLowerCase();
+        const dept = document.getElementById('deptFilter').value;
+        let employees = getEmployees();
+
+        if (search) {
+          employees = employees.filter(e =>
+            e.name.toLowerCase().includes(search) || e.email.toLowerCase().includes(search)
+          );
+        }
+        if (dept) {
+          employees = employees.filter(e => e.department === dept);
+        }
+
+        const tbody = document.getElementById('employeeBody');
+        if (employees.length === 0) {
+          tbody.innerHTML = `<tr><td colspan="5" class="empty">No employees found.</td></tr>`;
+          return;
+        }
+        tbody.innerHTML = employees.map(e => `
+          <tr>
+            <td>${escapeHtml(e.name)}</td>
+            <td>${escapeHtml(e.email)}</td>
+            <td>${escapeHtml(e.department)}</td>
+            <td>${Number(e.salary).toLocaleString()}</td>
+            <td>
+              <button class="btn btn-sm" data-edit="${e.id}">Edit</button>
+              <button class="btn btn-sm btn-danger" data-delete="${e.id}">Delete</button>
+            </td>
+          </tr>
+        `).join('');
+
+        tbody.querySelectorAll('[data-edit]').forEach(b =>
+          b.addEventListener('click', () => startEdit(b.dataset.edit))
+        );
+        tbody.querySelectorAll('[data-delete]').forEach(b =>
+          b.addEventListener('click', () => {
+            if (confirm('Delete this employee? Their attendance and leaves will remain but won\'t show them.')) {
+              deleteEmployee(b.dataset.delete);
+              renderList();
+              populateDeptFilter();
+            }
+          })
+        );
+      }
+
+      function populateDeptFilter() {
+        const depts = [...new Set(getEmployees().map(e => e.department))];
+        const sel = document.getElementById('deptFilter');
+        const current = sel.value;
+        sel.innerHTML = `<option value="">All Departments</option>` +
+          depts.map(d => `<option value="${escapeHtml(d)}">${escapeHtml(d)}</option>`).join('');
+        sel.value = current;
+      }
+
+      document.getElementById('searchInput').addEventListener('input', renderList);
+      document.getElementById('deptFilter').addEventListener('change', renderList);
+    })();
+  </script>
+</body>
+</html>

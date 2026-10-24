@@ -1,0 +1,135 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>HCM Lite — Login</title>
+  <link rel="stylesheet" href="css/style.css" />
+</head>
+<body class="auth-body">
+  <div class="auth-card">
+    <h1>HCM Lite</h1>
+    <p class="subtitle">Human Capital Management</p>
+
+    <!-- First-run setup -->
+    <div id="setupBox" class="hidden">
+      <h2>First-Time Setup</h2>
+      <p class="hint">No company found. Create the company and Admin account.</p>
+      <form id="setupForm" novalidate>
+        <label>Company Name</label>
+        <input type="text" id="companyName" placeholder="e.g. Saylani Tech" />
+        <span class="error" id="err-companyName"></span>
+
+        <label>Admin Name</label>
+        <input type="text" id="adminName" placeholder="Your full name" />
+        <span class="error" id="err-adminName"></span>
+
+        <label>Admin Email</label>
+        <input type="email" id="adminEmail" placeholder="admin@company.com" />
+        <span class="error" id="err-adminEmail"></span>
+
+        <label>Admin Password</label>
+        <input type="password" id="adminPassword" placeholder="min 4 characters" />
+        <span class="error" id="err-adminPassword"></span>
+
+        <button type="submit" class="btn">Create Company & Admin</button>
+      </form>
+    </div>
+
+    <!-- Login -->
+    <div id="loginBox" class="hidden">
+      <h2>Login</h2>
+      <form id="loginForm" novalidate>
+        <label>Email</label>
+        <input type="email" id="loginEmail" placeholder="your@email.com" />
+        <span class="error" id="err-loginEmail"></span>
+
+        <label>Password</label>
+        <input type="password" id="loginPassword" placeholder="Your password" />
+        <span class="error" id="err-loginPassword"></span>
+
+        <button type="submit" class="btn">Login</button>
+      </form>
+    </div>
+  </div>
+
+  <script src="js/storage.js"></script>
+  <script src="js/auth.js"></script>
+  <script>
+    (function () {
+      const company = getCompany();
+      if (!company) {
+        document.getElementById('setupBox').classList.remove('hidden');
+      } else {
+        document.getElementById('loginBox').classList.remove('hidden');
+      }
+
+      // Setup handler
+      document.getElementById('setupForm').addEventListener('submit', function (e) {
+        e.preventDefault();
+        const name = document.getElementById('companyName').value.trim();
+        const adminName = document.getElementById('adminName').value.trim();
+        const adminEmail = document.getElementById('adminEmail').value.trim();
+        const adminPassword = document.getElementById('adminPassword').value;
+
+        clearErrors(['err-companyName','err-adminName','err-adminEmail','err-adminPassword']);
+        let ok = true;
+
+        if (!name) { setError('err-companyName', 'Company name is required'); ok = false; }
+        if (!adminName) { setError('err-adminName', 'Admin name is required'); ok = false; }
+        if (!isValidEmail(adminEmail)) { setError('err-adminEmail', 'Valid email required'); ok = false; }
+        if (adminPassword.length < 4) { setError('err-adminPassword', 'Password must be at least 4 characters'); ok = false; }
+
+        if (!ok) return;
+
+        const users = getUsers();
+        users.push({
+          id: Date.now(),
+          name: adminName,
+          email: adminEmail.toLowerCase(),
+          password: adminPassword,
+          role: 'admin',
+          department: 'HR',
+          salary: 0
+        });
+        saveUsers(users);
+        saveCompany({
+          name: name,
+          startTime: '09:00',
+          graceMinutes: 15,
+          leaveQuota: 20,
+          workingDays: [1,2,3,4,5]
+        });
+
+        alert('Company created! Please login.');
+        document.getElementById('setupBox').classList.add('hidden');
+        document.getElementById('loginBox').classList.remove('hidden');
+      });
+
+      // Login handler
+      document.getElementById('loginForm').addEventListener('submit', function (e) {
+        e.preventDefault();
+        const email = document.getElementById('loginEmail').value.trim().toLowerCase();
+        const password = document.getElementById('loginPassword').value;
+
+        clearErrors(['err-loginEmail','err-loginPassword']);
+        let ok = true;
+        if (!isValidEmail(email)) { setError('err-loginEmail', 'Valid email required'); ok = false; }
+        if (!password) { setError('err-loginPassword', 'Password required'); ok = false; }
+        if (!ok) return;
+
+        const user = login(email, password);
+        if (!user) {
+          setError('err-loginPassword', 'Invalid email or password');
+          return;
+        }
+        if (user.role === 'admin') {
+          window.location.href = 'pages/admin.html';
+        } else {
+          window.location.href = 'pages/employee.html';
+        }
+      });
+    })();
+  </script>
+</body>
+</html>
